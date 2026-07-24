@@ -1,5 +1,5 @@
 const compression = require('compression');
-app.use(compression());
+
 
 const { error: envError } = require('dotenv').config();
 if (envError) console.warn('[dotenv] Fichier .env non trouvé — variables système utilisées.');
@@ -141,6 +141,7 @@ function handleChauffeurDisconnect(socket) {
 }
 
 app.use(helmet({ crossOriginResourcePolicy: false }));
+app.use(compression());   // ✅ ajouté ici
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true }));
