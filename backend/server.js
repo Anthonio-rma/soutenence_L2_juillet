@@ -58,7 +58,7 @@ const corsOptions = {
     // En développement uniquement : autorise tout localhost/127.0.0.1, quel que soit le port
     // (utile pour Flutter web qui change de port aléatoirement à chaque lancement).
     const localhostRegex = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i;
-    const isLocalhostDev = !isProd && localhostRegex.test(origin.trim());
+    const isLocalhostDev = localhostRegex.test(origin.trim());
 
     console.log('[CORS DEBUG] isLocalhostDev =', isLocalhostDev, '| inAllowedList =', ALLOWED_ORIGINS.includes(origin));
 

@@ -7,6 +7,14 @@ import {
   RotateCcw, ChevronDown, Filter, TrendingUp,
 } from "lucide-react";
 
+/* ─── Configuration de l'API ───
+   En dev (Vite), tu peux créer un fichier .env à la racine avec :
+     VITE_API_URL=http://localhost:5000
+   En prod, laisse .env vide ou absent : ça retombera automatiquement
+   sur ton backend déployé sur Render. */
+const API_BASE = import.meta.env.VITE_API_URL || 'https://soutenence-l2-juillet.onrender.com';
+const API_URL = `${API_BASE}/api/lignes`;
+
 // ── DONNÉES ──
 const INITIAL_LIGNES = [
   { id:1,  code:"L-101", nom:"Ankatso – Analakely",         depart:"Ankatso",        arrivee:"Analakely",      coop:"Ankatso",         statut:"active",    tarif:400,  distance:8.2,  duree:"35 min", vehicules:12, date:"12 jan. 2024", activite:"Il y a 2h"    },
@@ -492,8 +500,6 @@ export default function PageLignes() {
   const [sortBy, setSortBy]               = useState("code");
   const [isMobile, setIsMobile]           = useState(false);
   const [isSmallMobile, setIsSmallMobile] = useState(false);
-
-  const API_URL = "http://localhost:5000/api/lignes";
 
   useEffect(() => {
     const ctrl = new AbortController();

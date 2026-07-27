@@ -5,6 +5,9 @@ import axios from 'axios';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import { GoogleLogin } from '@react-oauth/google';
 
+
+const API_URL = process.env.REACT_APP_API_URL || 'https://soutenence-l2-juillet.onrender.com';
+
 const getRedirectPath = (role) => {
   const r = (role || '').toLowerCase().trim();
   if (r === 'utilisateur')                       return '/dashboard/carte-temps-reel';
@@ -54,7 +57,7 @@ export default function AuthInterface({ onBack }) {
     setSuccessMessage('');
     setIsLoading(true);
     try {
-      const response = await axios.post('http://localhost:5000/api/auth/login', {
+      const response = await axios.post(`${API_URL}/api/auth/login`, {
         email: formData.email,
         password: formData.password
       });
@@ -74,7 +77,7 @@ export default function AuthInterface({ onBack }) {
     setSuccessMessage('');
     setIsLoading(true);
     try {
-      await axios.post('http://localhost:5000/api/auth/register', { ...formData, role });
+      await axios.post(`${API_URL}/api/auth/register`, { ...formData, role });
       setSuccessMessage("Inscription réussie ! Vous pouvez maintenant vous connecter.");
       setFormData({ nom_complet: '', email: '', password: '' });
       setIsLogin(true);
@@ -89,7 +92,7 @@ export default function AuthInterface({ onBack }) {
   const handleGoogleSuccess = async (credentialResponse) => {
     try {
       setIsLoading(true);
-      const response = await axios.post('http://localhost:5000/api/auth/google', {
+      const response = await axios.post(`${API_URL}/api/auth/google`, {
         token: credentialResponse.credential
       });
       saveUserToStorage(response.data.user);

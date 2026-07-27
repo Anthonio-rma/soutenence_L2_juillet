@@ -6,6 +6,13 @@ import {
   AlertTriangle, CheckCircle, Play, Users, Route
 } from 'lucide-react';
 
+/* ─── Configuration de l'API ───
+   En dev (Vite), tu peux créer un fichier .env à la racine avec :
+     VITE_API_URL=http://localhost:5000
+   En prod, laisse .env vide ou absent : ça retombera automatiquement
+   sur ton backend déployé sur Render. */
+const API_URL = import.meta.env.VITE_API_URL || 'https://soutenence-l2-juillet.onrender.com';
+
 /* ─── Compteur animé ─── */
 function AnimatedCounter({ target, suffix = '', prefix = '', duration = 1.6 }) {
   const [display, setDisplay] = useState(0);
@@ -241,6 +248,7 @@ export default function PageUtilisateur() {
   const [routesCount, setRoutesCount] = useState(null);
   const [stopsCount, setStopsCount] = useState(null);
   const [usersCount, setUsersCount] = useState(null);
+  const [backendOffline, setBackendOffline] = useState(false); // ✅ indicateur de connexion au backend
 
   const MOCK = {
     routes: 12,
@@ -249,26 +257,26 @@ export default function PageUtilisateur() {
   };
 
   useEffect(() => {
-  const userData = localStorage.getItem('user');
-  if (userData) {
-    try {
-      const parsed = JSON.parse(userData);
-      // Le backend retourne nom_complet (ex: "Jean Rakoto")
-      // On prend uniquement le premier mot = prénom
-      const fullName = parsed.nom_complet || parsed.nom || parsed.name || '';
-      if (fullName) setUserName(fullName.trim().split(' ')[0]);
-    } catch (e) {}
-  }
-}, []);
+    const userData = localStorage.getItem('user');
+    if (userData) {
+      try {
+        const parsed = JSON.parse(userData);
+        // Le backend retourne nom_complet (ex: "Jean Rakoto")
+        // On prend uniquement le premier mot = prénom
+        const fullName = parsed.nom_complet || parsed.nom || parsed.name || '';
+        if (fullName) setUserName(fullName.trim().split(' ')[0]);
+      } catch (e) {}
+    }
+  }, []);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         const [routesRes, stopsRes, usersRes, liveRes] = await Promise.all([
-          fetch('http://localhost:5000/api/bus/routes'),
-          fetch('http://localhost:5000/api/bus/stops'),
-          fetch('http://localhost:5000/api/users'),
-          fetch('http://localhost:5000/api/positions/live'), // ✅ ajouté
+          fetch(`${API_URL}/api/bus/routes`),
+          fetch(`${API_URL}/api/bus/stops`),
+          fetch(`${API_URL}/api/users`),
+          fetch(`${API_URL}/api/positions/live`),
         ]);
 
         if (routesRes.ok) {
@@ -292,8 +300,11 @@ export default function PageUtilisateur() {
           const list = Array.isArray(liveJson) ? liveJson : (liveJson.data || []);
           setVehiclesOnline(list.length);
         }
+
+        setBackendOffline(false);
       } catch {
         // Backend indisponible — on garde 0 pour vehiclesOnline (pas de mock intentionnel)
+        setBackendOffline(true);
       }
     };
 
@@ -303,13 +314,16 @@ export default function PageUtilisateur() {
     // sans Socket.io (Flutter envoie une position toutes les 18 secondes).
     const interval = setInterval(async () => {
       try {
-        const liveRes = await fetch('http://localhost:5000/api/positions/live');
+        const liveRes = await fetch(`${API_URL}/api/positions/live`);
         if (liveRes.ok) {
           const liveJson = await liveRes.json();
           const list = Array.isArray(liveJson) ? liveJson : (liveJson.data || []);
           setVehiclesOnline(list.length);
         }
-      } catch {}
+        setBackendOffline(false);
+      } catch {
+        setBackendOffline(true);
+      }
     }, 20000);
 
     return () => clearInterval(interval);
@@ -357,6 +371,12 @@ export default function PageUtilisateur() {
           <p className="text-xs text-gray-400 mt-1 font-medium">
             {vehiclesOnline} taxis-be géo-localisés actifs sur vos coopératives suivies.
           </p>
+          {/* ✅ Petit indicateur discret si le backend est injoignable */}
+          {backendOffline && (
+            <p className="text-[10px] text-rose-500 font-semibold mt-1">
+              ⚠ Connexion au serveur impossible — données affichées peuvent être obsolètes.
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-3 w-full sm:w-auto">
           <div className="relative w-full sm:w-80">
@@ -396,13 +416,12 @@ export default function PageUtilisateur() {
           <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-emerald-400 to-emerald-200 opacity-0 group-hover:opacity-100 transition-opacity" />
         </motion.div>
 
-        {/* Card 2 : Véhicules En Ligne ✅ maintenant branché sur /api/positions/live */}
+        {/* Card 2 : Véhicules En Ligne ✅ branché sur /api/positions/live */}
         <motion.div variants={itemVariants}
           className="bg-white p-5 rounded-2xl border border-gray-100/80 shadow-sm flex flex-col justify-between relative overflow-hidden group hover:shadow-md transition-shadow"
         >
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Véhicules En Ligne</span>
-            {/* ✅ badge dynamique : vert si au moins 1 bus, gris sinon */}
             <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
               vehiclesOnline > 0
                 ? 'text-emerald-600 bg-emerald-50'
@@ -413,7 +432,6 @@ export default function PageUtilisateur() {
           </div>
           <div className="flex items-end justify-between mt-4">
             <span className="text-3xl font-extrabold text-gray-800 tracking-tight">
-              {/* ✅ AnimatedCounter avec target réel depuis /api/positions/live */}
               <AnimatedCounter target={vehiclesOnline} />
             </span>
             <SparkBars color="#f97316" values={[3, 5, 4, 6, 8, 7, 9]} />
@@ -494,13 +512,6 @@ export default function PageUtilisateur() {
             </div>
           </div>
 
-          {/*
-            Zone graphique responsive :
-            - hauteur adaptative selon la taille d'écran (mobile / tablette / desktop)
-            - colonne de labels Y fixe (100k, 75k...) qui ne bouge pas
-            - zone de barres défilable horizontalement sur très petits écrans,
-              pour éviter que les 8 colonnes ne soient écrasées et illisibles
-          */}
           <div className="h-40 sm:h-52 md:h-56 w-full relative mt-4">
             <div className="absolute inset-0 flex flex-col justify-between pointer-events-none z-0">
               {['100k', '75k', '50k', '25k', '0'].map((label, i) => (

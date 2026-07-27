@@ -2,6 +2,13 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, Bell, Edit2, Trash2, Check, X } from "lucide-react";
 
+/* ─── Configuration de l'API ───
+   En dev (Vite), tu peux créer un fichier .env à la racine avec :
+     VITE_API_URL=http://localhost:5000
+   En prod, laisse .env vide ou absent : ça retombera automatiquement
+   sur ton backend déployé sur Render. */
+const API_BASE = import.meta.env.VITE_API_URL || 'https://soutenence-l2-juillet.onrender.com';
+const API_URL = `${API_BASE}/api/users`;
 
 const INITIAL_USERS = [
   { id:1,  prenom:"Rakoto",      nom:"Andrianaivo",         email:"r.andrianaivo@taxibe.mg",         role:"administrateur", coop:"Ankatso",         statut:"actif",    date:"12 jan. 2024", activite:"Il y a 2h",   color:"#7c3aed", bg:"#f5f3ff" },
@@ -410,11 +417,10 @@ export default function PageUtilisateurs() {
   const [page, setPage]         = useState(1);
   const [toDelete, setToDelete] = useState(null);
   const [toEdit, setToEdit]     = useState(null);
+  const [backendOffline, setBackendOffline] = useState(false); // ✅ indicateur connexion backend
   const PER_PAGE = 8;
 
   useEffect(() => { setPage(1); }, [filter, search]);
-
-  const API_URL = "http://localhost:5000/api/users";
 
   useEffect(() => {
     const controller = new AbortController();
@@ -427,12 +433,14 @@ export default function PageUtilisateurs() {
         const normalized = Array.isArray(data) ? data.map(normalizeUser) : [];
         setUsers(normalized.length ? normalized : INITIAL_USERS);
         setLoading(false);
+        setBackendOffline(false);
       })
       .catch((err) => {
         if (err.name !== "AbortError") {
           console.error("Erreur de connexion au backend :", err);
           setUsers(INITIAL_USERS);
           setLoading(false);
+          setBackendOffline(true);
         }
       });
 
@@ -459,8 +467,10 @@ export default function PageUtilisateurs() {
       if (!response.ok) throw new Error(`Suppression échouée (${response.status})`);
       setUsers(prev => prev.filter(u => u.id !== toDelete.id));
       if (selected?.id === toDelete.id) setSelected(null);
+      setBackendOffline(false);
     } catch (error) {
       console.error("Erreur suppression utilisateur :", error);
+      setBackendOffline(true);
     } finally {
       setToDelete(null);
     }
@@ -491,9 +501,11 @@ export default function PageUtilisateurs() {
             const updatedUser = normalized.find(u => u.id === updated.id);
             if (selected?.id === updated.id && updatedUser) setSelected(updatedUser);
         }
+        setBackendOffline(false);
 
     } catch (error) {
         console.error("Erreur modification :", error);
+        setBackendOffline(true);
     } finally {
         setToEdit(null);
     }
@@ -552,6 +564,12 @@ export default function PageUtilisateurs() {
             <p style={{ fontSize:12, color:"#9ca3af", marginTop:3, fontWeight:500 }}>
               {users.length} utilisateurs enregistrés sur la plateforme Taxis-Be.
             </p>
+            {/* ✅ Indicateur discret si le backend Render est injoignable */}
+            {backendOffline && (
+              <p style={{ fontSize:11, color:"#ef4444", fontWeight:600, marginTop:4 }}>
+                ⚠ Connexion au serveur impossible — données affichées peuvent être locales/obsolètes.
+              </p>
+            )}
           </div>
 
           <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", justifyContent:"flex-end" }}>

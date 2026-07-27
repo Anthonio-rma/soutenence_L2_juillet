@@ -3,6 +3,13 @@ import { MapContainer, TileLayer, Polyline, Marker, Tooltip, Popup, useMap, useM
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
+/* ─── Configuration de l'API ───
+   En dev (Vite), tu peux créer un fichier .env à la racine avec :
+     VITE_API_URL=http://localhost:5000
+   En prod, laisse .env vide ou absent : ça retombera automatiquement
+   sur ton backend déployé sur Render. */
+const API_BASE = import.meta.env.VITE_API_URL || 'https://soutenence-l2-juillet.onrender.com';
+
 // ===================== ICONES BADGES RONDS A / B =====================
 const blueIcon = new L.DivIcon({
   className: 'custom-pin-icon',
@@ -191,7 +198,7 @@ const DonnerGPS = () => {
   const TANA_COORDS = [-18.8792, 47.5079];
 
   useEffect(() => {
-    fetch('http://localhost:5000/api/bus/routes')
+    fetch(`${API_BASE}/api/bus/routes`)
       .then(res => res.json())
       .then(data => setRoutes(Array.isArray(data) ? data : []))
       .catch(err => console.error("Erreur API routes:", err));
@@ -199,7 +206,7 @@ const DonnerGPS = () => {
 
   const fetchAlertes = () => {
     setLoadingAlertes(true);
-    fetch('http://localhost:5000/api/alertes')
+    fetch(`${API_BASE}/api/alertes`)
       .then(res => res.json())
       .then(data => {
         const valides = Array.isArray(data)
@@ -259,7 +266,7 @@ const DonnerGPS = () => {
     setSaving(true);
     const payload = { type: formData.type, titre: formData.titre.trim(), description: formData.description.trim(), lat: formData.lat, lng: formData.lng, ligne_id: rattacherLigne ? formData.ligne_id : null };
     const isEdit = formMode === 'edit' && formData.id;
-    const url = isEdit ? `http://localhost:5000/api/alertes/${formData.id}` : 'http://localhost:5000/api/alertes';
+    const url = isEdit ? `${API_BASE}/api/alertes/${formData.id}` : `${API_BASE}/api/alertes`;
     const method = isEdit ? 'PUT' : 'POST';
     fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
       .then(res => res.json())
@@ -269,7 +276,7 @@ const DonnerGPS = () => {
   };
 
   const handleDeleteAlerte = (id) => {
-    fetch(`http://localhost:5000/api/alertes/${id}`, { method: 'DELETE' })
+    fetch(`${API_BASE}/api/alertes/${id}`, { method: 'DELETE' })
       .then(() => { setAlertes(prev => prev.filter(a => a.id !== id)); if (formData.id === id) closeForm(); })
       .catch(err => console.error("Erreur suppression alerte:", err));
   };
