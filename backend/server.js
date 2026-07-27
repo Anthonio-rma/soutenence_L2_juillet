@@ -47,22 +47,23 @@ const ALLOWED_ORIGINS = [
 console.log('[BOOT] ALLOWED_ORIGINS =', ALLOWED_ORIGINS);
 console.log('[BOOT] NODE_ENV =', process.env.NODE_ENV, '| isProd =', isProd);
 
+// ─── Logique CORS partagée (HTTP + Socket.io) ──────────────────────────────
+// Une seule fonction pour décider si une origine est autorisée, réutilisée
+// à la fois par le middleware Express `cors()` et par la config CORS de
+// Socket.io — pour éviter que les deux divergent (c'était le bug précédent :
+// Socket.io utilisait une liste fixe alors que HTTP acceptait localhost
+// sur n'importe quel port).
+const localhostRegex = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i;
+
+function isOriginAllowed(origin) {
+  if (!origin) return true; // requêtes sans origine (curl, apps mobiles natives, etc.)
+  const trimmed = origin.trim();
+  return localhostRegex.test(trimmed) || ALLOWED_ORIGINS.includes(trimmed);
+}
+
 const corsOptions = {
   origin: (origin, cb) => {
-    // ── DIAGNOSTIC TEMPORAIRE ──────────────────────────────────────────────
-    console.log('[CORS DEBUG] reçu >>>' + origin + '<<< | typeof=' + typeof origin + ' | length=' + (origin ? origin.length : 'n/a'));
-    // ────────────────────────────────────────────────────────────────────────
-
-    if (!origin) return cb(null, true);
-
-    // En développement uniquement : autorise tout localhost/127.0.0.1, quel que soit le port
-    // (utile pour Flutter web qui change de port aléatoirement à chaque lancement).
-    const localhostRegex = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i;
-    const isLocalhostDev = localhostRegex.test(origin.trim());
-
-    console.log('[CORS DEBUG] isLocalhostDev =', isLocalhostDev, '| inAllowedList =', ALLOWED_ORIGINS.includes(origin));
-
-    if (isLocalhostDev || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    if (isOriginAllowed(origin)) return cb(null, true);
     cb(new Error(`CORS bloqué : ${origin}`));
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -72,7 +73,10 @@ const corsOptions = {
 
 const io = new Server(server, {
   cors: {
-    origin: ALLOWED_ORIGINS,
+    origin: (origin, cb) => {
+      if (isOriginAllowed(origin)) return cb(null, true);
+      cb(new Error(`CORS Socket.io bloqué : ${origin}`));
+    },
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
   },
 });
@@ -90,10 +94,8 @@ io.on('connection', (socket) => {
   // ── Traçage du chauffeur associé à ce socket ────────────────────────────
   // NOTE : cet event 'position_update' est écouté ici uniquement pour retenir
   // quel chauffeur_id correspond à quel socket.id — il ne fait AUCUN broadcast.
-  // Si un autre listener 'position_update' existe déjà ailleurs (ex: dans
-  // positionRoutes.js ou un contrôleur socket dédié) pour relayer la position
-  // aux autres clients, il continue de fonctionner normalement en parallèle :
-  // plusieurs listeners peuvent écouter le même event sans conflit.
+  // Le broadcast réel de la position est fait côté HTTP dans
+  // positionController.js (POST /api/positions), via req.app.get('io').emit(...).
   socket.on('position_update', (payload) => {
     if (!payload || !payload.chauffeur_id) return;
 

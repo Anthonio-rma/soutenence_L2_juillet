@@ -4,6 +4,19 @@ import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { io } from 'socket.io-client';
 
+// ═════════════════════════════════════════════════════════════════════════════
+// CONFIGURATION BACKEND
+// ═════════════════════════════════════════════════════════════════════════════
+// Une seule source de vérité pour l'URL du backend. Utilise une variable
+// d'environnement si elle existe (utile pour re-basculer en local plus tard
+// sans toucher au code), sinon retombe sur l'URL Render de production.
+//
+// ⚠️ Render (plan gratuit) met le service en veille après inactivité.
+// La première requête après une pause peut prendre 30-60s (cold start).
+const API_BASE_URL =
+  (typeof process !== 'undefined' && process.env && process.env.REACT_APP_API_URL) ||
+  'https://soutenence-l2-juillet.onrender.com';
+
 // ===================== ICONES BADGES RONDS A / B =====================
 const blueIcon = new L.DivIcon({
   className: 'custom-pin-icon',
@@ -139,29 +152,50 @@ const SuiviGPS = () => {
   const [showBusLive,     setShowBusLive]     = useState(true);
   const [isPanelExpanded, setIsPanelExpanded] = useState(false);
 
+  // ── État de connexion backend : utile pour informer l'utilisateur pendant
+  //    le cold start de Render (plan gratuit → jusqu'à 30-60s au réveil). ──
+  const [isBackendWaking, setIsBackendWaking] = useState(false);
+  const [backendError,    setBackendError]    = useState(null);
+
   const socketRef   = useRef(null);
   const TANA_COORDS = [-18.8792, 47.5079];
 
   // ── API routes ──────────────────────────────────────────────────────────────
   useEffect(() => {
-    fetch('http://localhost:5000/api/bus/routes')
-      .then(r => r.json())
-      .then(data => { setRoutes(data); setFilteredResults(data); })
-      .catch(err => console.error('Erreur API:', err));
+    setIsBackendWaking(true);
+    fetch(`${API_BASE_URL}/api/bus/routes`)
+      .then(r => {
+        if (!r.ok) throw new Error(`Erreur ${r.status}`);
+        return r.json();
+      })
+      .then(data => {
+        const list = Array.isArray(data) ? data : (data.data || []);
+        setRoutes(list);
+        setFilteredResults(list);
+        setBackendError(null);
+      })
+      .catch(err => {
+        console.error('Erreur API routes:', err);
+        setBackendError('Impossible de charger les lignes de bus. Le serveur se réveille peut-être — réessayez dans quelques secondes.');
+      })
+      .finally(() => setIsBackendWaking(false));
   }, []);
 
   // ── Arrêts de la ligne sélectionnée ────────────────────────────────────────
   useEffect(() => {
     if (!selectedRoute) { setArrets([]); return; }
-    fetch(`http://localhost:5000/api/lignes/${selectedRoute.id}/arrets`)
+    fetch(`${API_BASE_URL}/api/lignes/${selectedRoute.id}/arrets`)
       .then(r => r.json())
       .then(data => setArrets(Array.isArray(data) ? data.filter(a => typeof a.lat === 'number' && typeof a.lng === 'number') : []))
-      .catch(() => setArrets([]));
+      .catch(err => {
+        console.error('Erreur API arrêts:', err);
+        setArrets([]);
+      });
   }, [selectedRoute]);
 
   // ── Alertes trafic ─────────────────────────────────────────────────────────
   useEffect(() => {
-    fetch('http://localhost:5000/api/alertes')
+    fetch(`${API_BASE_URL}/api/alertes`)
       .then(r => r.json())
       .then(data => setAlertes(Array.isArray(data) ? data.filter(a => typeof a.lat === 'number' && typeof a.lng === 'number') : []))
       .catch(err => console.error('Erreur API alertes:', err));
@@ -169,7 +203,7 @@ const SuiviGPS = () => {
 
   // ── Positions live + Socket.io ──────────────────────────────────────────────
   useEffect(() => {
-    fetch('http://localhost:5000/api/positions/live')
+    fetch(`${API_BASE_URL}/api/positions/live`)
       .then(r => r.json())
       .then(json => {
         const list = Array.isArray(json) ? json : (json.data || []);
@@ -181,8 +215,17 @@ const SuiviGPS = () => {
       })
       .catch(err => console.error('Erreur API positions/live:', err));
 
-    const socket = io('http://localhost:5000');
+    // Connexion Socket.io vers le backend Render (même URL, en websocket).
+    const socket = io(API_BASE_URL, {
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: 10,
+      reconnectionDelay: 2000,
+    });
     socketRef.current = socket;
+
+    socket.on('connect_error', (err) => {
+      console.warn('Socket.io connexion échouée (le backend se réveille peut-être) :', err.message);
+    });
 
     socket.on('position_update', (payload) => {
       setChauffeursLive(prev => ({
@@ -233,6 +276,15 @@ const SuiviGPS = () => {
      * ─────────────────────────────────────────────────────────────────────────
      */
     <div className="relative flex flex-col md:flex-row w-full h-full overflow-hidden font-sans">
+
+      {/* Bannière de statut backend (cold start / erreur) */}
+      {(isBackendWaking || backendError) && (
+        <div className="absolute top-0 left-0 right-0 z-[2000] flex justify-center pointer-events-none">
+          <div className={`mt-3 px-4 py-2 rounded-full text-[0.8rem] font-medium shadow-md pointer-events-auto ${backendError ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-white text-gray-600 border border-gray-200'}`}>
+            {backendError ? backendError : 'Connexion au serveur en cours (réveil possible, jusqu\'à 30-60s)…'}
+          </div>
+        </div>
+      )}
 
       {/* ══════════════════════ CARTE (occupe tout l'espace restant) ══════════════════════ */}
       <main className="relative flex-1 order-1 md:order-2 h-full min-h-0">
