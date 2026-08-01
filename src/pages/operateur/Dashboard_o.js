@@ -1,9 +1,23 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
   Bus, Route, MapPin, AlertTriangle,
-  CheckCircle, Clock, Wifi, Building2, RefreshCw
+  CheckCircle, Clock, Wifi, Building2, RefreshCw, WifiOff
 } from 'lucide-react';
+
+/* ===================== CONFIG API ===================== */
+// URL du backend déployé sur Render. Surchargeable via VITE_API_URL pour du dev local.
+const API_BASE_URL =
+  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) ||
+  'https://soutenence-l2-juillet.onrender.com';
+
+const ENDPOINTS = {
+  routes: `${API_BASE_URL}/api/bus/routes`,
+  stops: `${API_BASE_URL}/api/bus/stops`,
+  live: `${API_BASE_URL}/api/positions/live`,
+  cooperatives: `${API_BASE_URL}/api/cooperatives`,
+  alertes: `${API_BASE_URL}/api/alertes`,
+};
 
 /* ─── Compteur animé ─── */
 function AnimatedCounter({ target, suffix = '', duration = 1.4 }) {
@@ -11,14 +25,16 @@ function AnimatedCounter({ target, suffix = '', duration = 1.4 }) {
   useEffect(() => {
     if (target === null || target === undefined) return;
     const startTime = performance.now();
+    let frameId;
     const step = (now) => {
       const elapsed = (now - startTime) / 1000;
       const progress = Math.min(elapsed / duration, 1);
       const ease = 1 - Math.pow(1 - progress, 3);
       setDisplay(Math.round(target * ease));
-      if (progress < 1) requestAnimationFrame(step);
+      if (progress < 1) frameId = requestAnimationFrame(step);
     };
-    requestAnimationFrame(step);
+    frameId = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frameId);
   }, [target, duration]);
   if (target === null || target === undefined) return <span className="text-gray-300">—</span>;
   return <>{display.toLocaleString()}{suffix}</>;
@@ -42,16 +58,31 @@ const coopAccents = [
   { bg: 'bg-cyan-50',    icon: 'text-cyan-500'    },
 ];
 
-/* ─── Composant principal ─── */
+/* ─── Utilitaire : lit une réponse fetch settled et renvoie [] / null en cas d'échec ─── */
+async function readJsonSafe(settledResult) {
+  if (settledResult.status !== 'fulfilled' || !settledResult.value.ok) return null;
+  try {
+    const data = await settledResult.value.json();
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+/* ===================== COMPOSANT PRINCIPAL ===================== */
+
 export default function Dashboard_o() {
   const [userName, setUserName]             = useState('Opérateur');
-  const [lastRefresh, setLastRefresh]       = useState(new Date());
-  const [vehiclesOnline, setVehiclesOnline] = useState(null);
-  const [totalRoutes, setTotalRoutes]       = useState(null);
-  const [totalStops, setTotalStops]         = useState(null);
-  const [cooperatives, setCooperatives]     = useState([]);
-  const [alertes, setAlertes]               = useState([]);
-  const [loading, setLoading]               = useState(true);
+  const [lastRefresh, setLastRefresh]        = useState(new Date());
+  const [vehiclesOnline, setVehiclesOnline]  = useState(null);
+  const [totalRoutes, setTotalRoutes]        = useState(null);
+  const [totalStops, setTotalStops]          = useState(null);
+  const [cooperatives, setCooperatives]      = useState([]);
+  const [alertesList, setAlertesList]        = useState([]);
+  const [loading, setLoading]                = useState(true);
+  const [serverDown, setServerDown]          = useState(false);
+
+  const abortRef = useRef(null);
 
   /* ─── Utilisateur ─── */
   useEffect(() => {
@@ -61,55 +92,72 @@ export default function Dashboard_o() {
         const u = JSON.parse(raw);
         const full = u.nom_complet || u.nom || '';
         if (full) setUserName(full.trim().split(' ')[0]);
-      } catch {}
+      } catch {
+        // profil illisible, on garde le nom par défaut
+      }
     }
   }, []);
 
-  /* ─── Fetch toutes les données ─── */
-  const fetchAll = async () => {
+  /* ─── Fetch de toutes les données du dashboard ─── */
+  const fetchAll = useCallback(async () => {
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setLoading(true);
+
     try {
-      const [routesRes, stopsRes, liveRes, coopRes, alertesRes] = await Promise.allSettled([
-        fetch('http://localhost:5000/api/bus/routes'),
-        fetch('http://localhost:5000/api/bus/stops'),
-        fetch('http://localhost:5000/api/positions/live'),
-        fetch('/api/cooperatives'),
-        fetch('http://localhost:5000/api/alertes'),
+      const results = await Promise.allSettled([
+        fetch(ENDPOINTS.routes, { signal: controller.signal }),
+        fetch(ENDPOINTS.stops, { signal: controller.signal }),
+        fetch(ENDPOINTS.live, { signal: controller.signal }),
+        fetch(ENDPOINTS.cooperatives, { signal: controller.signal }),
+        fetch(ENDPOINTS.alertes, { signal: controller.signal }),
       ]);
 
-      if (routesRes.status === 'fulfilled' && routesRes.value.ok) {
-        const d = await routesRes.value.json();
-        setTotalRoutes(Array.isArray(d) ? d.length : null);
-      }
-      if (stopsRes.status === 'fulfilled' && stopsRes.value.ok) {
-        const d = await stopsRes.value.json();
-        setTotalStops(Array.isArray(d) ? d.length : null);
-      }
-      if (liveRes.status === 'fulfilled' && liveRes.value.ok) {
-        const d = await liveRes.value.json();
-        const list = Array.isArray(d) ? d : (d.data || []);
+      if (controller.signal.aborted) return;
+
+      const [routesRes, stopsRes, liveRes, coopRes, alertesRes] = results;
+
+      const routesData = await readJsonSafe(routesRes);
+      setTotalRoutes(Array.isArray(routesData) ? routesData.length : null);
+
+      const stopsData = await readJsonSafe(stopsRes);
+      setTotalStops(Array.isArray(stopsData) ? stopsData.length : null);
+
+      const liveData = await readJsonSafe(liveRes);
+      if (liveData !== null) {
+        const list = Array.isArray(liveData) ? liveData : (liveData.data || []);
         setVehiclesOnline(list.length);
+      } else {
+        setVehiclesOnline(null);
       }
-      if (coopRes.status === 'fulfilled' && coopRes.value.ok) {
-        const d = await coopRes.value.json();
-        setCooperatives(Array.isArray(d) ? d : (d.data || []));
-      }
-      if (alertesRes.status === 'fulfilled' && alertesRes.value.ok) {
-        const d = await alertesRes.value.json();
-        setAlertes(Array.isArray(d) ? d : (d.data || []));
-      }
-    } catch {}
+
+      const coopData = await readJsonSafe(coopRes);
+      setCooperatives(Array.isArray(coopData) ? coopData : (coopData?.data || []));
+
+      const alertesData = await readJsonSafe(alertesRes);
+      setAlertesList(Array.isArray(alertesData) ? alertesData : (alertesData?.data || []));
+
+      // Le serveur est considéré down uniquement si TOUTES les requêtes ont échoué
+      const allFailed = results.every((r) => r.status === 'rejected' || !r.value.ok);
+      setServerDown(allFailed);
+    } catch {
+      setServerDown(true);
+    }
+
     setLoading(false);
     setLastRefresh(new Date());
-  };
+  }, []);
 
   useEffect(() => {
     fetchAll();
     const interval = setInterval(fetchAll, 30000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const alertesList = alertes;
+    return () => {
+      clearInterval(interval);
+      abortRef.current?.abort();
+    };
+  }, [fetchAll]);
 
   /* ─── Animation variants ─── */
   const container = {
@@ -132,7 +180,7 @@ export default function Dashboard_o() {
       badge: vehiclesOnline > 0
         ? { text: 'En service', cls: 'text-emerald-600 bg-emerald-50' }
         : { text: 'Aucun', cls: 'text-gray-400 bg-gray-100' },
-      sub: vehiclesOnline === 0
+      sub: !vehiclesOnline
         ? 'Aucun chauffeur connecté'
         : `${vehiclesOnline} chauffeur${vehiclesOnline > 1 ? 's' : ''} actif${vehiclesOnline > 1 ? 's' : ''}`,
     },
@@ -142,7 +190,7 @@ export default function Dashboard_o() {
       icon: Route,
       color: 'text-blue-500',
       bg: 'bg-blue-50',
-      badge: { text: '+8%', cls: 'text-blue-600 bg-blue-50' },
+      badge: { text: 'Réseau', cls: 'text-blue-600 bg-blue-50' },
       sub: 'Lignes de bus actives',
     },
     {
@@ -189,13 +237,28 @@ export default function Dashboard_o() {
           <button
             onClick={fetchAll}
             disabled={loading}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-100 rounded-xl text-xs font-semibold text-gray-600 hover:bg-gray-50 shadow-sm transition-all"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-100 rounded-xl text-xs font-semibold text-gray-600 hover:bg-gray-50 shadow-sm transition-all disabled:opacity-60"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-blue-500' : ''}`} />
             Actualiser
           </button>
         </div>
       </motion.div>
+
+      {/* ── BANDEAU SERVEUR INJOIGNABLE ── */}
+      {serverDown && !loading && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-center gap-2 bg-red-50 border border-red-100 text-red-600 text-xs font-semibold px-4 py-3 rounded-xl"
+        >
+          <WifiOff className="w-4 h-4 shrink-0" />
+          Impossible de contacter le serveur. Le service peut mettre quelques secondes à démarrer, réessayez dans un instant.
+          <button onClick={fetchAll} className="ml-auto underline underline-offset-2 shrink-0">
+            Réessayer
+          </button>
+        </motion.div>
+      )}
 
       {/* ── KPI CARDS ── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -307,7 +370,12 @@ export default function Dashboard_o() {
 
           {/* Liste scrollable */}
           <div className="overflow-y-auto flex-1 divide-y divide-gray-50/80">
-            {alertesList.length === 0 ? (
+            {loading && alertesList.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-10 px-5 text-center">
+                <RefreshCw className="w-6 h-6 text-gray-300 animate-spin mb-2" />
+                <p className="text-xs font-semibold text-gray-500">Chargement des alertes…</p>
+              </div>
+            ) : alertesList.length === 0 ? (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}

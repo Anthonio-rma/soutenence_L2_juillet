@@ -1,11 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MapContainer, TileLayer, Marker, Tooltip, useMap } from 'react-leaflet';
-import { AlertTriangle, Construction, Ban, Radio, RefreshCw, Search } from 'lucide-react';
+import { AlertTriangle, Construction, Ban, RefreshCw, Search, WifiOff } from 'lucide-react';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
 const TANA_CENTER = [-18.9100, 47.5250];
+
+// ===================== CONFIG API =====================
+// URL du backend déployé sur Render. On peut la surcharger via une variable
+// d'environnement (VITE_API_URL) si besoin, sinon on retombe sur l'URL de prod.
+const API_BASE_URL =
+  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) ||
+  'https://soutenence-l2-juillet.onrender.com';
+
+const ALERTES_ENDPOINT = `${API_BASE_URL}/api/alertes`;
 
 // ===================== ICONES DES ALERTES TRAFIC =====================
 
@@ -19,6 +28,16 @@ const ICONES_ALERTE = {
   route_coupee: { bg: '#c62828', svg: RouteCoupeeSVG, label: 'Route coupée',  Icon: Ban },
 };
 
+const DEFAULT_ICONE = { bg: '#5e6266', svg: AccidentSVG, label: 'Alerte', Icon: AlertTriangle };
+
+const filterLabels = {
+  all: 'TOUS',
+  accident: 'ACCIDENT',
+  travaux: 'TRAVAUX',
+  route_coupee: 'ROUTE COUPÉE',
+};
+
+// ===================== HELPERS ICONES LEAFLET =====================
 
 const buildAlerteIcon = (bg, svgContent, selected = false) => new L.DivIcon({
   className: 'custom-pin-icon',
@@ -37,27 +56,28 @@ const buildAlerteIcon = (bg, svgContent, selected = false) => new L.DivIcon({
   iconAnchor: [selected ? 18 : 15, selected ? 18 : 15],
 });
 
+// Cache des icônes pour éviter de recréer un DivIcon à chaque rendu
+const iconCache = new Map();
 const getAlerteIcon = (type, selected = false) => {
-  const conf = ICONES_ALERTE[type] || { bg: '#5e6266', svg: AccidentSVG };
-  return buildAlerteIcon(conf.bg, conf.svg, selected);
-};
-
-const filterLabels = {
-  all: 'TOUS',
-  accident: 'ACCIDENT',
-  travaux: 'TRAVAUX',
-  route_coupee: 'ROUTE COUPÉE',
+  const key = `${type}-${selected}`;
+  if (iconCache.has(key)) return iconCache.get(key);
+  const conf = ICONES_ALERTE[type] || DEFAULT_ICONE;
+  const icon = buildAlerteIcon(conf.bg, conf.svg, selected);
+  iconCache.set(key, icon);
+  return icon;
 };
 
 // ===================== RECENTRAGE DE LA CARTE SUR L'ALERTE SELECTIONNEE =====================
 
 const ChangeView = ({ center, zoom }) => {
   const map = useMap();
-  useEffect(() => { if (center) map.setView(center, zoom); }, [center, map, zoom]);
+  useEffect(() => {
+    if (center) map.setView(center, zoom);
+  }, [center, map, zoom]);
   return null;
 };
 
-// ===================== CONTROLES DE ZOOM CUSTOM (style DonnerGPS.jsx) =====================
+// ===================== CONTROLES DE ZOOM CUSTOM =====================
 
 const ZoomButtons = () => {
   const map = useMap();
@@ -65,12 +85,14 @@ const ZoomButtons = () => {
     <div className="absolute bottom-6 right-4 z-[1000] bg-white rounded-md shadow-[0_1px_4px_rgba(0,0,0,0.3)] overflow-hidden">
       <button
         onClick={() => map.zoomIn()}
+        aria-label="Zoomer"
         className="w-[34px] h-[34px] border-none bg-white text-lg font-semibold text-gray-900 cursor-pointer block"
       >
         +
       </button>
       <button
         onClick={() => map.zoomOut()}
+        aria-label="Dézoomer"
         className="w-[34px] h-[34px] border-none border-t border-gray-200 bg-white text-lg font-semibold text-gray-900 cursor-pointer block"
       >
         −
@@ -79,63 +101,95 @@ const ZoomButtons = () => {
   );
 };
 
+// ===================== DEBOUNCE UTIL =====================
+
+function useDebouncedValue(value, delay = 250) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return debounced;
+}
+
+// ===================== COMPOSANT PRINCIPAL =====================
+
 export default function AlertesTrafic() {
-  // ===================== ALERTES REELLES (base de données) =====================
   const [alertesList, setAlertesList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [erreur, setErreur] = useState(null);
 
   const [filter, setFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [pushEnabled, setPushEnabled] = useState(true);
   const [selectedAlerte, setSelectedAlerte] = useState(null);
-  const fetchAlertes = () => {
+
+  const debouncedQuery = useDebouncedValue(searchQuery, 200);
+  const abortRef = useRef(null);
+
+  const fetchAlertes = useCallback(() => {
+    // Annule une requête précédente encore en vol avant d'en relancer une nouvelle
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setLoading(true);
     setErreur(null);
-    fetch('http://localhost:5000/api/alertes')
-      .then(res => res.json())
-      .then(data => {
+
+    fetch(ALERTES_ENDPOINT, { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error(`Réponse serveur invalide (${res.status})`);
+        return res.json();
+      })
+      .then((data) => {
         const valides = Array.isArray(data)
-          ? data.filter(a => typeof a.lat === 'number' && typeof a.lng === 'number')
+          ? data.filter((a) => typeof a.lat === 'number' && typeof a.lng === 'number')
           : [];
         setAlertesList(valides);
         window.dispatchEvent(new CustomEvent('alertes-updated', { detail: valides.length }));
       })
-      .catch(err => {
-        console.error("Erreur API alertes:", err);
-        setErreur("Impossible de charger les alertes.");
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        console.error('Erreur API alertes:', err);
+        setErreur("Impossible de contacter le serveur. Vérifiez votre connexion et réessayez.");
         setAlertesList([]);
         window.dispatchEvent(new CustomEvent('alertes-updated', { detail: 0 }));
       })
       .finally(() => setLoading(false));
-  };
+  }, []);
 
-  useEffect(() => { fetchAlertes(); }, []);
+  useEffect(() => {
+    fetchAlertes();
+    return () => abortRef.current?.abort();
+  }, [fetchAlertes]);
 
-  const filteredAlertes = alertesList.filter(alerte => {
-    const matchesFilter = filter === 'all' || alerte.type === filter;
-    const query = searchQuery.toLowerCase();
-    const titre = (alerte.titre || '').toLowerCase();
-    const description = (alerte.description || '').toLowerCase();
-    return matchesFilter && (titre.includes(query) || description.includes(query));
-  });
+  const filteredAlertes = useMemo(() => {
+    const query = debouncedQuery.trim().toLowerCase();
+    return alertesList.filter((alerte) => {
+      const matchesFilter = filter === 'all' || alerte.type === filter;
+      if (!matchesFilter) return false;
+      if (!query) return true;
+      const titre = (alerte.titre || '').toLowerCase();
+      const description = (alerte.description || '').toLowerCase();
+      return titre.includes(query) || description.includes(query);
+    });
+  }, [alertesList, filter, debouncedQuery]);
 
-  const handleSelectAlerte = (alerte) => {
+  const handleSelectAlerte = useCallback((alerte) => {
     setSelectedAlerte(alerte);
-  };
+  }, []);
 
   return (
     <div className="flex-1 h-screen relative flex flex-col font-sans select-none overflow-hidden bg-[#f3f4f6]">
 
-      
+      {/* 1. BOUTON RAFRAICHIR */}
       <div className="absolute top-3 left-3 right-3 sm:top-4 sm:left-4 sm:right-4 z-[10] flex justify-between items-start pointer-events-none">
-        
         <motion.button
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           whileTap={{ scale: 0.92 }}
           onClick={fetchAlertes}
-          className="bg-white rounded-2xl p-3 shadow-xl border border-gray-100 flex items-center justify-center w-11 h-11 pointer-events-auto"
+          disabled={loading}
+          className="bg-white rounded-2xl p-3 shadow-xl border border-gray-100 flex items-center justify-center w-11 h-11 pointer-events-auto disabled:opacity-60"
           aria-label="Actualiser les alertes"
         >
           <RefreshCw className={`w-4 h-4 text-gray-500 ${loading ? 'animate-spin' : ''}`} />
@@ -146,7 +200,10 @@ export default function AlertesTrafic() {
       <div className="w-full h-full z-0 absolute inset-0">
         <MapContainer center={TANA_CENTER} zoom={13} zoomControl={false} className="w-full h-full">
           <ChangeView center={selectedAlerte ? [selectedAlerte.lat, selectedAlerte.lng] : null} zoom={15} />
-          <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+          <TileLayer
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          />
           {filteredAlertes.map((a) => (
             <Marker
               key={a.id}
@@ -155,7 +212,7 @@ export default function AlertesTrafic() {
               eventHandlers={{ click: () => handleSelectAlerte(a) }}
             >
               <Tooltip direction="top" offset={[0, -12]} opacity={1}>
-                <strong>{a.titre || (ICONES_ALERTE[a.type] || {}).label || 'Alerte'}</strong>
+                <strong>{a.titre || (ICONES_ALERTE[a.type] || DEFAULT_ICONE).label}</strong>
                 {a.description && <div style={{ marginTop: 2 }}>{a.description}</div>}
               </Tooltip>
             </Marker>
@@ -178,7 +235,7 @@ export default function AlertesTrafic() {
           )}
         </div>
 
-        {/* Champ de recherche avec icône, pour une hiérarchie visuelle plus claire */}
+        {/* Champ de recherche */}
         <div className="relative">
           <Search className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
@@ -186,16 +243,18 @@ export default function AlertesTrafic() {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Rechercher une alerte..."
+            aria-label="Rechercher une alerte"
             className="w-full pl-8 pr-4 py-2 bg-gray-50 border border-gray-100 rounded-xl text-xs focus:outline-none focus:border-[#5b51ef] transition-colors duration-150"
           />
         </div>
 
-        {/* Amélioration de l'emplacement : Utilisation d'une grille pour un alignement parfait */}
+        {/* Filtres */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 w-full">
-          {Object.keys(filterLabels).map(f => (
+          {Object.keys(filterLabels).map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
+              aria-pressed={filter === f}
               className={`px-2 py-2 rounded-xl text-[9px] font-bold uppercase transition-all duration-200 border ${
                 filter === f
                   ? 'bg-[#5b51ef] text-white border-[#5b51ef] shadow-md'
@@ -207,17 +266,27 @@ export default function AlertesTrafic() {
           ))}
         </div>
 
+        {/* Liste des alertes */}
         <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2 pt-2">
           {loading && (
             <div className="flex gap-3">
-              {[0, 1, 2].map(i => (
+              {[0, 1, 2].map((i) => (
                 <div key={i} className="min-w-[240px] h-[64px] bg-gray-100 rounded-2xl animate-pulse" />
               ))}
             </div>
           )}
 
           {!loading && erreur && (
-            <div className="text-[11px] text-red-500 py-4 px-1">{erreur}</div>
+            <div className="flex items-center gap-2 text-[11px] text-red-500 py-4 px-1">
+              <WifiOff className="w-3.5 h-3.5 shrink-0" />
+              <span>{erreur}</span>
+              <button
+                onClick={fetchAlertes}
+                className="ml-2 text-[10px] font-bold text-[#5b51ef] underline underline-offset-2"
+              >
+                Réessayer
+              </button>
+            </div>
           )}
 
           {!loading && !erreur && filteredAlertes.length === 0 && (
@@ -226,7 +295,7 @@ export default function AlertesTrafic() {
 
           <AnimatePresence>
             {!loading && !erreur && filteredAlertes.map((a) => {
-              const conf = ICONES_ALERTE[a.type] || { bg: '#5e6266', label: a.type, Icon: AlertTriangle };
+              const conf = ICONES_ALERTE[a.type] || { ...DEFAULT_ICONE, label: a.type || DEFAULT_ICONE.label };
               const AlerteIcon = conf.Icon;
               const isSelected = selectedAlerte?.id === a.id;
               return (
