@@ -17,7 +17,7 @@ router.get('/routes', async (req, res) => {
     const [rows] = await db.query(`
       SELECT id, ref, name, depart, arrivee, coop,
              statut, tarif, distance, duree, vehicules,
-             AsText(route_geom) AS geom
+             ST_AsText(route_geom) AS geom
       FROM bus_routes
       ORDER BY ref ASC
     `);
@@ -31,7 +31,7 @@ router.get('/routes', async (req, res) => {
 router.get('/stops', async (req, res) => {
   try {
     const [rows] = await db.query(`
-      SELECT id, name, AsText(location) AS geom
+      SELECT id, name, ST_AsText(location) AS geom
       FROM bus_stops
     `);
     res.json(rows);
