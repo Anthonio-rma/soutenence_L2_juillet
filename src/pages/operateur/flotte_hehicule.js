@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Bus, Wifi, WifiOff, MapPin, User, RefreshCw,
-  Search, Filter, ChevronDown, MoreHorizontal,
-  Navigation, Clock, AlertCircle, CheckCircle,
-  ArrowUpRight, Activity, Fuel, Gauge
+  Bus, WifiOff, MapPin, RefreshCw,
+  Search, Navigation, Clock, AlertCircle,
+  Activity, Gauge
 } from 'lucide-react';
 
 /* ─── Compteur animé ─── */
