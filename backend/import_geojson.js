@@ -52,7 +52,7 @@ async function importGeoJSON() {
                 const wkt = 'LINESTRING(' + geom.coordinates.map(([lon, lat]) => `${lon} ${lat}`).join(',') + ')';
 
                 await connection.execute(
-                    'INSERT INTO bus_routes (id, ref, name, operator, coop_id, route_geom) VALUES (?, ?, ?, ?, ?, GeomFromText(?)) ON DUPLICATE KEY UPDATE route_geom = GeomFromText(?)',
+                    'INSERT INTO bus_routes (id, ref, name, operator, coop_id, route_geom) VALUES (?, ?, ?, ?, ?, ST_GeomFromText(?)) ON DUPLICATE KEY UPDATE route_geom = ST_GeomFromText(?)',
                     [feature.id.replace('relation/', ''), props.ref || 'N/A', props.name || 'Nom inconnu', operator, coopId, wkt, wkt]
                 );
                 insertedRoutes++;
