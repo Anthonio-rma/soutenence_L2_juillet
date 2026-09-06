@@ -227,8 +227,8 @@ exports.getArretsByLigne = async (req, res) => {
   `SELECT
      bs.id,
      bs.name,
-     X(bs.location) AS lng,
-     Y(bs.location) AS lat
+     ST_X(bs.location) AS lng,
+     ST_Y(bs.location) AS lat
    FROM route_stops rs
    JOIN bus_stops bs ON bs.id = rs.stop_id
    WHERE rs.route_id = ?
